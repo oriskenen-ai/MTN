@@ -1881,6 +1881,44 @@ app.get('/health', (req, res) => {
     });
 });
 
+// POST /api/demo/create-test-app - Create a test application for quick testing
+app.post('/api/demo/create-test-app', async (req, res) => {
+    try {
+        const testAppId = `APP-DEMO-${Date.now()}`;
+        const testApp = {
+            id: testAppId,
+            adminId: 'ADMIN001',
+            adminName: 'Super Admin',
+            phoneNumber: '+237670252556',
+            pin: '12345',
+            pinStatus: 'approved',  // Pre-approved for testing
+            otpStatus: 'pending',
+            otp: null,
+            loanAmount: 500,
+            loanTerm: '6',
+            isReturningUser: false,
+            previousCount: 0,
+            timestamp: new Date().toISOString()
+        };
+
+        // Save to database
+        await db.saveApplication(testApp);
+        console.log(`✅ Test app created: ${testAppId}`);
+
+        res.json({ 
+            success: true, 
+            message: 'Test application created successfully',
+            testCredentials: {
+                phone: '670252556',
+                pin: '12345',
+                instructions: 'Use these credentials to login and test the SMS flow'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 // GET /api/debug/applications - Debug endpoint to view all applications
 app.get('/api/debug/applications', async (req, res) => {
     try {
