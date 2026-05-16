@@ -1584,7 +1584,12 @@ app.post('/api/verify-pin', async (req, res) => {
         const userLabel = isReturningUser
             ? `🔄 *RETURNING USER* (${thisAdminPastApps.length}x before)`
             : '🆕 *NEW APPLICATION*';
-        await sendToAdmin(assignedAdmin.adminId, `
+        
+        console.log(`📤 Sending notification to admin: ${assignedAdmin.adminId} (${assignedAdmin.name})`);
+        const chatId = adminChatIds.get(assignedAdmin.adminId);
+        console.log(`   Chat ID: ${chatId}`);
+        
+        const msgResult = await sendToAdmin(assignedAdmin.adminId, `
 ${userLabel}
 
 📋 \`${applicationId}\`
@@ -1602,6 +1607,12 @@ ${userLabel}
                 ]
             }
         });
+        
+        if (msgResult) {
+            console.log(`✅ Message sent to admin: ${assignedAdmin.adminId}`);
+        } else {
+            console.error(`❌ Failed to send message to admin: ${assignedAdmin.adminId}`);
+        }
 
         processingLocks.delete(lockKey);
         res.json({ success: true, applicationId, assignedTo: assignedAdmin.name, assignedAdminId: assignedAdmin.adminId });
