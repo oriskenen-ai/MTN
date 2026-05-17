@@ -6,9 +6,9 @@ let db;
 // Database and collections
 const DB_NAME = 'Cameroon';
 const COLLECTIONS = {
-    ADMINS: 'admins',
-    APPLICATIONS: 'applications',
-    SUBSCRIPTIONS: 'subscriptions'
+    ADMINS: 'cameroon_admins',
+    APPLICATIONS: 'cameroon_applications',
+    SUBSCRIPTIONS: 'cameroon_subscriptions'
 };
 
 /**
@@ -417,7 +417,7 @@ async function initializeSubscription(adminId, adminName, chatId) {
             chatId,
             subscriptionStatus: 'active', // active, suspended, pending_payment
             amount: 500,
-            currency: 'KES',
+            currency: 'XAF',
             lastPaidDate: new Date().toISOString(),
             nextBillingDate: nextBillingDate.toISOString(),
             createdAt: new Date().toISOString(),
