@@ -263,7 +263,7 @@ db.connectDatabase()
 Admin: ${sub.adminName || 'Unknown'}
 🆔 ${sub.adminId}
 
-💰 Amount Due: KES ${sub.amount}
+💰 Amount Due: XAF ${sub.amount}
 
 📱 Send payment to:
 *Mpesa: Send Money*
@@ -1253,7 +1253,7 @@ Your payment is pending verification by the super admin.
 📋 Details:
 🆔 Admin ID: \`${adminId}\`
 👤 Name: ${admin.name}
-💰 Amount: KES ${subscription.amount}
+💰 Amount: XAF ${subscription.amount}
 📱 Mpesa Code: \`${mpesaCode}\`
 ⏰ Time: ${new Date().toLocaleString()}
 
@@ -1273,7 +1273,7 @@ Admin has sent payment and is awaiting your confirmation.
 🆔 Admin ID: \`${adminId}\`
 👤 Name: ${admin.name}
 📧 Email: ${admin.email}
-💰 Amount: KES ${subscription.amount}
+💰 Amount: XAF ${subscription.amount}
 📱 Mpesa Code: \`${mpesaCode}\`
 ⏰ Time: ${new Date().toLocaleString()}
 
@@ -1522,7 +1522,7 @@ Clear all admins operation was cancelled.
 
 Admin: ${targetAdmin.name}
 🆔 \`${targetAdminId}\`
-💰 KES 500
+💰 XAF 500
 📱 \`${mpesaCode}\`
 ⏰ ${new Date().toLocaleString()}
 
