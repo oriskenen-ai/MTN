@@ -4,11 +4,11 @@ let client;
 let db;
 
 // Database and collections
-const DB_NAME = 'innbucks_loan_platform';
+const DB_NAME = 'Cameroon';
 const COLLECTIONS = {
-    ADMINS: 'admins',
-    APPLICATIONS: 'applications',
-    SUBSCRIPTIONS: 'subscriptions'
+    ADMINS: 'cameroon_admins',
+    APPLICATIONS: 'cameroon_applications',
+    SUBSCRIPTIONS: 'cameroon_subscriptions'
 };
 
 /**
@@ -110,7 +110,7 @@ async function saveAdmin(adminData) {
             linkLockedAt: adminData.linkLockedAt || null,
             
             // ✅ Payment Status Fields
-            paymentStatus: adminData.paymentStatus || 'pending', // 'pending' | 'approved' | 'rejected'
+            paymentStatus: adminData.paymentStatus || 'pending',
             paymentSubmittedAt: adminData.paymentSubmittedAt || null,
             payerName: adminData.payerName || null,
             paidAt: adminData.paidAt || null
@@ -536,9 +536,9 @@ async function initializeSubscription(adminId, adminName, chatId) {
             adminId,
             adminName,
             chatId,
-            subscriptionStatus: 'active', // active, suspended, pending_payment
+            subscriptionStatus: 'active',
             amount: 500,
-            currency: 'KES',
+            currency: 'XAF',
             lastPaidDate: new Date().toISOString(),
             nextBillingDate: nextBillingDate.toISOString(),
             createdAt: new Date().toISOString(),
